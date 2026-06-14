@@ -9,6 +9,7 @@ import json
 import pandas as pd
 from datetime import datetime
 from astropy.time import Time
+import numpy as np
 # --------------------------------------------------
 # Get the fitting results from the results.txt file
 # and put  into a single row.
@@ -196,6 +197,44 @@ def parse_results_txt(path: Path):
            
             except Exception as e:
                 results["mid_time_utc"] = f"conversion_failed: {e}"
+                
+    # ---------------------------------------------------------
+    # Transit depth and SNR estimation
+    # ---------------------------------------------------------
+    print("\nMMDBH - start Transit depth and SNR estimation")
+    rp = results.get("rp_over_rs_value")
+    rp_low = results.get("rp_over_rs_unc_low")
+    rp_high = results.get("rp_over_rs_unc_high")
+
+    if rp is not None:
+        print("\nMMDBH - Transit depth calculation")
+        # Depth
+        depth = rp * rp
+        results["transit_depth"] = depth
+        results["transit_depth_ppt"] = depth * 1e3
+
+        # Depth uncertainties
+        if rp_low is not None:
+            depth_low = (rp - abs(rp_low))**2 - depth
+            results["transit_depth_unc_low"] = depth_low
+            results["transit_depth_unc_low_ppt"] = depth_low * 1e3
+
+        if rp_high is not None:
+            depth_high = (rp + abs(rp_high))**2 - depth
+            results["transit_depth_unc_high"] = depth_high
+            results["transit_depth_unc_high_ppt"] = depth_high * 1e3
+
+    # ---------------------------------------------------------
+    # SNR estimate using detrended RMS
+    # ---------------------------------------------------------
+
+    rms = results.get("Detrended_RMS")
+    lc_detrended = np.loadtxt(path.parent / "detrended_model.txt")
+    npts = lc_detrended.shape[0]
+    results["Detrended_Npoints"] = npts
+    if rms is not None and npts is not None and rp is not None:
+        snr = (depth / rms) * (npts ** 0.5)
+        results["transit_snr"] = snr
 
     return results
 
