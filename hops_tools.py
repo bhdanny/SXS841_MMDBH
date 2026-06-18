@@ -10,6 +10,92 @@ import pandas as pd
 from datetime import datetime
 from astropy.time import Time
 import numpy as np
+
+# --------------------------------------------------
+# Extract detrending method from PHOTOMETRY_APERTURE_XX/log.yaml.
+#    Returns a string like 'Airmass' or 'Airmass + Background'.
+# --------------------------------------------------
+def extract_detrending_method_from_log(log_path: Path):
+  
+    if not log_path.exists():
+        return None
+
+    try:
+        with open(log_path, "r") as f:
+            data = yaml.safe_load(f)
+    except Exception:
+        return None
+
+    detr = data.get("detrending")
+
+    # Case 1: detrending is missing
+    if detr is None:
+        return None
+
+    # Case 2: detrending: Airmass  (string)
+    if isinstance(detr, str):
+        return detr
+
+    # Case 3: detrending: { method: Airmass }
+    if isinstance(detr, dict):
+        method = detr.get("method")
+        if isinstance(method, list):
+            return " + ".join(str(m) for m in method)
+        return str(method) if method is not None else None
+
+    # Case 4: detrending: [Airmass, Background]
+    if isinstance(detr, list):
+        return " + ".join(str(m) for m in detr)
+
+    # Unknown format
+    return str(detr)
+
+def extract_initial_params_from_aperture_log(log_path: Path):
+    """
+    Extract initial model parameters from PHOTOMETRY_APERTURE_XX/log.yaml.
+    Returns a dict with period, rp_over_rs, sma_over_rs, inclination, mid_time.
+    Missing values return None.
+    """
+    params = {
+        "init_iterations": None,
+        "init_burn": None,
+        "init_period": None,
+        "init_rp_over_rs": None,
+        "init_sma_over_rs": None,
+        "init_inclination": None,
+        "init_mid_time": None,
+        "init_transit_depth": None,
+        "init_transit_depth_ppt": None,
+    }
+
+    if not log_path.exists():
+        log_warn(f"Aperture log.yaml missing: {log_path}")
+        return params
+
+    try:
+        with open(log_path, "r") as f:
+            data = yaml.safe_load(f)
+    except Exception as e:
+        log_error(f"Failed to read aperture log.yaml: {e}")
+        return params
+
+    # Extract parameters if present
+    params["init_iterations"]   = data.get("iterations")
+    params["init_burn"]         = data.get("burn")
+    params["init_period"]       = data.get("period")
+    params["init_rp_over_rs"]   = data.get("rp_over_rs")
+    params["init_sma_over_rs"]  = data.get("sma_over_rs")
+    params["init_inclination"]  = data.get("inclination")
+    params["init_mid_time"]     = data.get("mid_time")
+
+    # Compute transit depth if rp_over_rs is present
+    rp = params["init_rp_over_rs"]
+    if rp is not None:
+        depth = rp * rp
+        params["init_transit_depth"] = depth
+        params["init_transit_depth_ppt"] = depth * 1e3  # convert to ppt
+
+    return params
 # --------------------------------------------------
 # Get the fitting results from the results.txt file
 # and put  into a single row.
@@ -28,7 +114,13 @@ def parse_results_txt(path: Path):
     """
 
     print("\nMMDBH - start of parse_results_txt function")
-    lines = path.read_text().splitlines()
+    # SAFE FILE READ
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.read().splitlines()
+    except Exception as e:
+        print(f"❌ Could not read {path}: {e}")
+        return {"read_error": str(e)}
 
     results = {}
     in_table = False
@@ -229,12 +321,26 @@ def parse_results_txt(path: Path):
     # ---------------------------------------------------------
 
     rms = results.get("Detrended_RMS")
-    lc_detrended = np.loadtxt(path.parent / "detrended_model.txt")
-    npts = lc_detrended.shape[0]
-    results["Detrended_Npoints"] = npts
-    if rms is not None and npts is not None and rp is not None:
-        snr = (depth / rms) * (npts ** 0.5)
-        results["transit_snr"] = snr
+
+    # ---------------------------------------------------------
+    # SAFE LOAD of detrended_model.txt
+    # ---------------------------------------------------------
+    detrended_path = path.parent / "detrended_model.txt"
+
+    try:
+        lc_detrended = np.loadtxt(detrended_path)
+        npts = lc_detrended.shape[0]
+        results["Detrended_Npoints"] = npts
+
+        if rms is not None and rp is not None:
+            snr = (depth / rms) * (npts ** 0.5)
+            results["transit_snr"] = snr
+
+    except Exception as e:
+        print(f"❌ Could not read {detrended_path}: {e}")
+        results["Detrended_Npoints"] = None
+        results["transit_snr"] = None
+    
 
     return results
 
@@ -313,14 +419,43 @@ def collect_fitting_results(root_folder: Path):
             fit_results = parse_results_txt(results_file)
             print("      Extracted keys:", list(fit_results.keys())[:10], "...")
 
+            # Extract detrending method from the fitting folder's log.yaml
+            log_yaml = fit_folder / "log.yaml"
+            detrending_method = extract_detrending_method_from_log(log_yaml)
+            # Extract initial model parameters from aperture log.yaml
+            aperture_log = fit_folder / "log.yaml"
+            initial_params = extract_initial_params_from_aperture_log(aperture_log)
+            
             row = {
                 "root_path": str(root_folder),
                 "photometry_folder": phot_folder.name,
                 "fitting_folder": fit_folder.name,
+                "detrending_method": detrending_method,
             }
 
+            row.update(initial_params)   # ← NEW
             row.update(fit_results)
+            
+            # ---------------------------------------------------------
+            # Compare expected vs fitted transit depth (N-sigma)
+            # ---------------------------------------------------------
+            init_depth = row.get("init_transit_depth")
+            fit_depth = row.get("transit_depth")
+            unc_low = row.get("transit_depth_unc_low")
+            unc_high = row.get("transit_depth_unc_high")
+
+            if init_depth is not None and fit_depth is not None and unc_low is not None and unc_high is not None:
+                sigma = (abs(unc_low) + abs(unc_high)) / 2
+                if sigma > 0:
+                    row["transit_depth_Nsigma"] = (fit_depth - init_depth) / sigma
+                else:
+                    row["transit_depth_Nsigma"] = None
+            else:
+                row["transit_depth_Nsigma"] = None
+
+            
             rows.append(row)
+            
     print("`nMMDBH - Check a print works")
     print("\nTotal rows collected:", len(rows))
     return rows
