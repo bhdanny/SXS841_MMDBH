@@ -1,0 +1,170 @@
+def parse_results_txt(path: Path):
+    """
+    Parse HOPS results.txt using whitespace splitting.
+    Extract ALL variables with fit/fix, value, uncertainties.
+    Also extract metadata and detrended residuals.
+    """
+    lines = path.read_text().splitlines()
+
+    results = {}
+    in_table = False
+    in_detrended = False
+
+    for line in lines:
+        stripped = line.strip()
+
+        # Start of table (header begins with "# variable")
+        if stripped.startswith("# variable"):
+            in_table = True
+            continue
+
+        # End of table: blank line
+        if in_table and stripped == "":
+            in_table = False
+            continue
+
+        # -----------------------------
+        # Parse table rows
+        # -----------------------------
+        if in_table and not stripped.startswith("#"):
+            parts = stripped.split()
+
+            # Expected format:
+            # var, fitfix, value, unc_low, unc_high, initial, min, max
+            if len(parts) >= 5:
+                var = parts[0]
+                fitfix = parts[1]
+                value = parts[2]
+                unc_low = parts[3]
+                unc_high = parts[4]
+
+                def clean(x):
+                    return None if x in ("--", "") else float(x)
+
+                results[f"{var}_fitfix"] = fitfix
+                results[f"{var}_value"] = clean(value)
+                results[f"{var}_unc_low"] = clean(unc_low)
+                results[f"{var}_unc_high"] = clean(unc_high)
+
+            continue
+
+        # -----------------------------
+        # Detect detrended block
+        # -----------------------------
+        if stripped.startswith("#Detrended Residuals"):
+            in_detrended = True
+            continue
+
+        # -----------------------------
+        # Parse metadata lines
+        # -----------------------------
+        if stripped.startswith("#") and ":" in stripped:
+            key, val = stripped[1:].split(":", 1)
+            key = key.strip().replace(" ", "_")
+            val = val.strip()
+
+            # Convert numeric values
+            try:
+                if "." in val or "e" in val.lower():
+                    val = float(val)
+                else:
+                    val = int(val)
+            except:
+                pass
+
+            if in_detrended:
+                results[f"Detrended_{key}"] = val
+            else:
+                results[key] = val
+
+    return results
+
+def find_fitting_folders(root_dir):
+    """
+    Scan a directory tree and return a sorted list of valid fitting folders.
+    A valid folder is one that contains BOTH:
+        - results.txt
+        - config.yaml   (or config.yml)
+    This mirrors the structure produced by HOPS-like pipelines.
+
+    Parameters
+    ----------
+    root_dir : str or Path
+        The directory to scan.
+
+    Returns
+    -------
+    list of Path
+        Sorted list of folders that contain valid fitting outputs.
+    """
+    from pathlib import Path
+
+    root = Path(root_dir).expanduser().resolve()
+    if not root.exists():
+        raise FileNotFoundError(f"Root directory does not exist: {root}")
+
+    fitting_folders = []
+
+    for folder in root.rglob("*"):
+        if not folder.is_dir():
+            continue
+
+        results_file = folder / "results.txt"
+        config_yaml  = folder / "log.yaml"
+        config_yml   = folder / "log.yml"
+
+        # Folder is valid if results.txt exists AND one config file exists
+        if results_file.exists() and (config_yaml.exists() or config_yml.exists()):
+            fitting_folders.append(folder)
+
+    # Sort by folder name (natural sort)
+    fitting_folders = sorted(fitting_folders, key=lambda p: p.name.lower())
+
+    return fitting_folders
+
+def collect_fitting_results(root_folder: Path):
+    rows = []
+
+    print("Scanning root:", root_folder)
+
+    for phot_folder in root_folder.glob("**/PHOTOMETRY_*"):
+        if not phot_folder.is_dir():
+            continue  # skip files like PHOTOMETRY_g.txt
+        print("\nFound photometry folder:", phot_folder)
+        
+        fitting_folders = find_fitting_folders(phot_folder)
+        print("  Fitting folders:", fitting_folders)
+
+        for fit_folder in fitting_folders:
+            results_file = fit_folder / "results.txt"
+            print("    Checking:", results_file)
+
+            if not results_file.exists():
+                print("      ❌ results.txt NOT FOUND")
+                continue
+
+            print("      ✔ results.txt FOUND")
+
+            fit_results = parse_results_txt(results_file)
+            print("      Extracted keys:", list(fit_results.keys())[:10], "...")
+
+            row = {
+                "root_path": str(root_folder),
+                "photometry_folder": phot_folder.name,
+                "fitting_folder": fit_folder.name,
+            }
+
+            row.update(fit_results)
+            rows.append(row)
+
+    print("\nTotal rows collected:", len(rows))
+    return rows
+
+def load_yaml(path):
+    """Safe YAML loader."""
+    try:
+        with open(path, "r") as f:
+            return yaml.safe_load(f)
+    except:
+        return {}
+

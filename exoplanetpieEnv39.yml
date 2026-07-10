@@ -1,0 +1,25 @@
+name: exoplanetpieEnv39
+channels:
+  - conda-forge
+  - defaults
+
+dependencies:
+  - python=3.9
+  - numpy=1.23
+  - scipy=1.9
+  - matplotlib=3.6
+  - pandas=1.5
+  - astropy=4.3.1        # installed by conda, works on ARM
+  - pip
+  - pip:
+      - photutils==1.1.0
+      - eleanor==0.2.2
+      - lightkurve==2.4.0
+      - astroquery
+      - tqdm
+      - requests
+      - beautifulsoup4
+      - pillow
+      - uncertainties
+      - corner
+

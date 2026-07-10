@@ -1,0 +1,16 @@
+name: exo311
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - numpy=1.26.4
+  - scipy=1.11
+  - pandas
+  - matplotlib
+  - arviz=0.15.1
+  - pymc=5.10.4
+  - pytensor
+  - corner
+  - pip
+  - pip:
+      - exoplanet==0.6.0
