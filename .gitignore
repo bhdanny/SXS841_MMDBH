@@ -1,2 +1,9 @@
 DAN_test.xlsx
 DAN_test2.xlsx
+Untitled.ipynb
+Untitled3.ipynb
+Untitled2.ipynb
+Untitled1.ipynb
+# Ignore Jupyter notebook checkpoints
+.ipynb_checkpoints/
+**/.ipynb_checkpoints/
