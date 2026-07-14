@@ -100,11 +100,11 @@ def extract_initial_params_from_aperture_log(log_path: Path):
 # Get the fitting results from the results.txt file
 # and put  into a single row.
 # --------------------------------------------------
-from pathlib import Path
-from astropy.time import Time
-
-from pathlib import Path
-from astropy.time import Time
+    # from pathlib import Path
+    # from astropy.time import Time
+    
+    # from pathlib import Path
+    # from astropy.time import Time
 
 def parse_results_txt(path: Path):
     """
