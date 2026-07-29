@@ -322,6 +322,7 @@ def parse_results_txt(path: Path):
 
     rms = results.get("Detrended_RMS")
 
+    
     # ---------------------------------------------------------
     # SAFE LOAD of detrended_model.txt
     # ---------------------------------------------------------
@@ -329,11 +330,27 @@ def parse_results_txt(path: Path):
 
     try:
         lc_detrended = np.loadtxt(detrended_path)
-        npts = lc_detrended.shape[0]
-        results["Detrended_Npoints"] = npts
+        # npts = lc_detrended.shape[0]
+        model = lc_detrended[:, 4]
+        residuals = lc_detrended[:, 5]
+        # Count points that are actually inside the transit
+        in_transit = model < 1.0
+        n_in_transit = np.count_nonzero(in_transit)
+
+         # Count points that are actually outside the transit
+        out_of_transit = model >= 1.0
+        oot_rms = np.sqrt(np.mean(residuals[out_of_transit]**2))
+
+        results["Detrended_Npoints"] = lc_detrended.shape[0]
+        results["Transit_Npoints"] = n_in_transit
+        results["oot_rms"] = oot_rms
+    
+        
+        #results["Detrended_Npoints"] = npts
 
         if rms is not None and rp is not None:
-            snr = (depth / rms) * (npts ** 0.5)
+            # snr = (depth / rms) * (npts ** 0.5)
+            snr = (depth/oot_rms)*np.sqrt(n_in_transit)
             results["transit_snr"] = snr
 
     except Exception as e:
